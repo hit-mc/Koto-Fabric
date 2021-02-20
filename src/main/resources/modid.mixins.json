@@ -6,7 +6,7 @@
   "mixins": [
   ],
   "client": [
-    "ExampleMixin"
+    "com.keuin.koto.mixin.ExampleMixin"
   ],
   "injectors": {
     "defaultRequire": 1
