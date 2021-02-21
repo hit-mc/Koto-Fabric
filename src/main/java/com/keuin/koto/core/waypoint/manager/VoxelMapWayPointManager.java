@@ -29,6 +29,8 @@ public class VoxelMapWayPointManager implements WayPointManager {
         try (FileReader fileReader = new FileReader(voxelMapWayPointsFile)) {
             try (BufferedReader reader = new BufferedReader(fileReader)) {
                 for (String ln = reader.readLine(); ln != null; ln = reader.readLine()) {
+                    if (!ln.endsWith("#")) // skip other lines
+                        continue;
                     try {
                         // read all waypoints
                         WayPoint wayPoint = WayPoint.fromVoxelMapRecord(ln);
