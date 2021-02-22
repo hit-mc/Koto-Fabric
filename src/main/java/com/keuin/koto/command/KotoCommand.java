@@ -48,7 +48,7 @@ public class KotoCommand {
                     final Formatting commandFormatting = Formatting.DARK_PURPLE;
                     final String[] commands = new String[]{
                             "/goto list [<world>]",
-                            "/goto <point>",
+                            "/goto <world> <point>",
                             "/goto prev",
                             "/goto reload"
                     };
@@ -61,7 +61,7 @@ public class KotoCommand {
                     MutableText feedback = new LiteralText("Usage:\n");
                     for (int i = 0; i < commands.length; i++) {
                         feedback.append(new LiteralText(commands[i]).formatted(commandFormatting))
-                                .append(": ")
+                                .append(" ")
                                 .append(descriptions[i])
                                 .append("\n");
                     }
