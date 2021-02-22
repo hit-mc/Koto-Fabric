@@ -1,12 +1,7 @@
 package com.keuin.koto.command;
 
-import com.keuin.koto.core.navigation.Navigation;
-import com.keuin.koto.core.navigation.Navigator;
-import com.keuin.koto.core.util.InteractionUtil;
 import com.keuin.koto.core.util.PermissionValidator;
-import com.keuin.koto.core.waypoint.Pos3d;
 import com.keuin.koto.core.waypoint.WayPoint;
-import com.keuin.koto.core.waypoint.WorldedPos3d;
 import com.keuin.koto.core.waypoint.manager.WayPointManager;
 import com.mojang.brigadier.Command;
 import com.mojang.brigadier.CommandDispatcher;
@@ -18,6 +13,7 @@ import com.mojang.brigadier.suggestion.Suggestions;
 import com.mojang.brigadier.suggestion.SuggestionsBuilder;
 import net.fabricmc.fabric.api.command.v1.CommandRegistrationCallback;
 import net.minecraft.command.CommandSource;
+import net.minecraft.entity.Entity;
 import net.minecraft.server.command.CommandManager;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.world.ServerWorld;
@@ -25,10 +21,9 @@ import net.minecraft.text.LiteralText;
 import net.minecraft.text.MutableText;
 import net.minecraft.util.Formatting;
 
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Optional;
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class KotoCommand {
 
@@ -40,6 +35,8 @@ public class KotoCommand {
     private final String DIMENSIONS_NETHER = "the_nether";
     private final String DIMENSIONS_THE_END = "the_end";
 
+    private final Map<UUID, WayPoint> previousWayPointMap = new ConcurrentHashMap<>();
+
     private final CommandRegistrationCallback commandRegistrationCallback = new CommandRegistrationCallback() {
         @Override
         public void register(CommandDispatcher<ServerCommandSource> commandDispatcher, boolean b) {
@@ -48,12 +45,27 @@ public class KotoCommand {
             commandDispatcher.register(CommandManager.literal("goto").executes(new Command<ServerCommandSource>() {
                 @Override
                 public int run(CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
-                    context.getSource().sendFeedback(new LiteralText("Usage:\n")
-                                    .append(new LiteralText("/goto list [<world>]: ").formatted(Formatting.DARK_PURPLE))
-                                    .append("show all available waypoints. If world is not specified, waypoints in all worlds will be printed\n")
-                                    .append(new LiteralText("/goto <point>: ").formatted(Formatting.DARK_PURPLE))
-                                    .append("navigate to the given waypoint.")
-                            , false);
+                    final Formatting commandFormatting = Formatting.DARK_PURPLE;
+                    final String[] commands = new String[]{
+                            "/goto list [<world>]",
+                            "/goto <point>",
+                            "/goto prev",
+                            "/goto reload"
+                    };
+                    final String[] descriptions = new String[]{
+                            "show all available waypoints. If world is not specified, waypoints in all worlds will be printed.",
+                            "navigate to the given waypoint.",
+                            "navigate to the last used waypoint.",
+                            "reload all waypoints from disk."
+                    };
+                    MutableText feedback = new LiteralText("Usage:\n");
+                    for (int i = 0; i < commands.length; i++) {
+                        feedback.append(new LiteralText(commands[i]).formatted(commandFormatting))
+                                .append(": ")
+                                .append(descriptions[i])
+                                .append("\n");
+                    }
+                    context.getSource().sendFeedback(feedback, false);
                     return COMMAND_SUCCESS;
                 }
             }));
@@ -134,32 +146,12 @@ public class KotoCommand {
 
                                     WayPoint wayPoint = wayPointManager.getWayPointsMap(world).get(target);
                                     if (wayPoint != null) {
-                                        context.getSource().sendFeedback(new LiteralText("Location of ").append(new LiteralText(
-                                                "[" + wayPoint.getName() + "]").formatted(Formatting.GOLD))
-                                                .append(new LiteralText(": " +
-                                                        InteractionUtil.getPosVoxelMapLocationString(
-                                                                (Pos3d) wayPoint.getPosition()
-                                                        ))), false);
-
-                                        Optional.ofNullable(context.getSource().getEntity()).ifPresent(entity -> {
-                                            // create navigation if executed by player
-                                            WorldedPos3d startPoint = WorldedPos3d.ofEntity(entity);
-                                            WorldedPos3d endPoint = wayPoint.getPosition();
-
-                                            Navigation navigation = Navigator
-                                                    .navigateTo(startPoint, endPoint);
-                                            context.getSource().sendFeedback(
-                                                    navigation.getRichText()
-                                                            .append("\nDirection: ")
-                                                            .append(InteractionUtil.getColoredPositionDelta(
-                                                                    startPoint,
-                                                                    endPoint,
-                                                                    false
-                                                            )),
-                                                    false
-                                            );
-                                        });
-
+                                        // record previous waypoint
+                                        Optional.ofNullable(context.getSource().getEntity())
+                                                .map(Entity::getUuid)
+                                                .ifPresent(uuid -> previousWayPointMap.put(uuid, wayPoint));
+                                        // navigate to
+                                        Goto.execute(wayPoint, context);
                                     } else {
                                         context.getSource().sendFeedback(new LiteralText(
                                                 "Specified target does not exist."
@@ -170,6 +162,7 @@ public class KotoCommand {
                                 }
                             }))));
 
+            // reload
             commandDispatcher.register(CommandManager.literal("goto").then(CommandManager.literal("reload")
                     .requires(PermissionValidator::op).executes(new Command<ServerCommandSource>() {
                         @Override
@@ -193,6 +186,24 @@ public class KotoCommand {
                             }
                         }
                     })));
+
+            // previous waypoint
+            commandDispatcher.register(CommandManager.literal("goto").then(CommandManager.literal("prev").executes(new Command<ServerCommandSource>() {
+                @Override
+                public int run(CommandContext<ServerCommandSource> context) throws CommandSyntaxException {
+                    WayPoint wayPoint = Optional.ofNullable(context.getSource().getEntity())
+                            .map(Entity::getUuid).map(previousWayPointMap::get).orElse(null);
+                    if (wayPoint != null) {
+                        Goto.execute(wayPoint, context);
+                        return COMMAND_SUCCESS;
+                    } else {
+                        context.getSource().sendFeedback(new LiteralText(
+                                "You have not navigated to any place."
+                        ).formatted(Formatting.DARK_RED), true);
+                        return COMMAND_FAILED;
+                    }
+                }
+            })));
         }
     };
 
